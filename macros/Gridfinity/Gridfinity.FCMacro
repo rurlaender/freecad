@@ -1,0 +1,213 @@
+from PySide import QtGui,QtCore
+import Part,FreeCAD
+import math
+
+def getValues():
+  length = 1
+  length = QtGui.QInputDialog.getInt(None,"Get length of the box", "Input length",length)[0]
+  width = 1
+  width = QtGui.QInputDialog.getInt(None,"Get width of the box", "Input width",width)[0]
+  height = 1
+  height = QtGui.QInputDialog.getInt(None,"Get height of the box", "Input height",height)[0]
+  name = f"Gridfinity {length}x{width}x{height}"
+  name = QtGui.QInputDialog.getText(None,"Get name of the part", "Input name", QtGui.QLineEdit.Normal, name)[0]
+  return (name, length, width, height)
+
+def createSketch(document, body, sketchName):
+  sketch = body.newObject('Sketcher::SketchObject',sketchName)
+  sketch.Support = (document.getObject('XY_Plane'),[''])
+  sketch.MapMode = 'FlatFace'
+  return sketch
+
+def createBody(document, bodyName, sketchName):
+  baseContainer = document.addObject('PartDesign::Body',bodyName)
+  skBaseContainer = baseContainer.newObject('Sketcher::SketchObject',sketchName)
+  skBaseContainer.Support = (document.getObject('XY_Plane'),[''])
+  skBaseContainer.MapMode = 'FlatFace'
+  return baseContainer,skBaseContainer
+
+def addRoundedRectangle(sketch, length, width, radius, centered=True, x=0,y=0):
+  top_left_x = -length/2
+  top_left_y = width/2
+  top_right_x = length/2
+  top_right_y = width/2
+  bottom_left_x = -length/2
+  bottom_left_y = -width/2
+  bottom_right_x = length/2
+  bottom_right_y = -width/2
+  #Lines
+  top_line = sketch.addGeometry(Part.LineSegment(App.Vector(top_left_x+radius,top_left_y,0),App.Vector(top_right_x-radius,top_right_y,0)),False)
+  bottom_line = sketch.addGeometry(Part.LineSegment(App.Vector(bottom_left_x+radius,bottom_left_y,0),App.Vector(bottom_right_x-radius,bottom_right_y,0)),False)
+  left_line = sketch.addGeometry(Part.LineSegment(App.Vector(top_left_x,top_left_y-radius,0),App.Vector(bottom_left_x,bottom_left_y+radius,0)),False)
+  right_line = sketch.addGeometry(Part.LineSegment(App.Vector(top_right_x,top_right_y-radius,0),App.Vector(bottom_right_x,bottom_right_y+radius,0)),False)
+  #Arcs
+  top_left_arc = sketch.addGeometry(Part.ArcOfCircle(Part.Circle(App.Vector(top_left_x+radius,top_left_y-radius,0),App.Vector(0,0,1),radius),math.pi/2 , math.pi),False)
+  top_right_arc = sketch.addGeometry(Part.ArcOfCircle(Part.Circle(App.Vector(top_right_x-radius,top_right_y-radius,0),App.Vector(0,0,1),radius),0 , math.pi/2),False)
+  bottom_left_arc = sketch.addGeometry(Part.ArcOfCircle(Part.Circle(App.Vector(bottom_left_x+radius,bottom_left_y+radius,0),App.Vector(0,0,1),radius),-math.pi , -math.pi/2),False)
+  bottom_right_arc = sketch.addGeometry(Part.ArcOfCircle(Part.Circle(App.Vector(bottom_right_x-radius,bottom_right_y+radius,0),App.Vector(0,0,1),radius),-math.pi/2,0),False)
+
+  #Constrains
+  #Set Tangenten
+  sketch.addConstraint(Sketcher.Constraint('Tangent',top_line,2,top_right_arc,2))
+  sketch.addConstraint(Sketcher.Constraint('Tangent',top_right_arc,1, right_line,1))
+  sketch.addConstraint(Sketcher.Constraint('Tangent',right_line,2,bottom_right_arc,2))
+  sketch.addConstraint(Sketcher.Constraint('Tangent',bottom_right_arc,1,bottom_line,2))
+  sketch.addConstraint(Sketcher.Constraint('Tangent',bottom_line,1,bottom_left_arc,2))
+  sketch.addConstraint(Sketcher.Constraint('Tangent',bottom_left_arc,1,left_line,2))
+  sketch.addConstraint(Sketcher.Constraint('Tangent',left_line,1,top_left_arc,2))
+  sketch.addConstraint(Sketcher.Constraint('Tangent',top_left_arc,1,top_line,1))
+  #Horizonal
+  sketch.addConstraint(Sketcher.Constraint('Horizontal', top_line))
+  sketch.addConstraint(Sketcher.Constraint('Horizontal', bottom_line))
+  #Vertical
+  sketch.addConstraint(Sketcher.Constraint('Vertical', left_line))
+  sketch.addConstraint(Sketcher.Constraint('Vertical', right_line))
+  #Equal radius
+  sketch.addConstraint(Sketcher.Constraint('Equal',top_right_arc,bottom_right_arc))
+  sketch.addConstraint(Sketcher.Constraint('Equal',bottom_right_arc,bottom_left_arc))
+  sketch.addConstraint(Sketcher.Constraint('Equal',bottom_left_arc,top_left_arc))
+  #Set Radius
+  #sketch.addConstraint(Sketcher.Constraint('DistanceX',top_right_arc,3,top_right_arc,1,radius)) 
+  sketch.addConstraint(Sketcher.Constraint('Radius',top_right_arc,radius))
+  #Set xy pos
+  if centered:
+    sketch.addConstraint(Sketcher.Constraint('Symmetric',top_left_arc,3,bottom_right_arc,3,-1,1))
+  else:
+    sketch.addConstraint(Sketcher.Constraint('DistanceX',left_line,1,-1,1,x))
+    sketch.addConstraint(Sketcher.Constraint('DistanceY',top_line,1,-1,1,y))
+
+    
+  #Set size
+  sketch.addConstraint(Sketcher.Constraint('DistanceX',left_line,1,right_line,1,length))
+  sketch.addConstraint(Sketcher.Constraint('DistanceY',bottom_line,1,top_line,1,width))
+
+
+def padSketch(doc, body, skBaseContainer, padName, height, angle, reverse=0):
+  # Gui.Selection.addSelection('test','BaseContainer','skBaseBody.')
+### Begin command PartDesign_Pad
+  pad = body.newObject('PartDesign::Pad',padName)
+  pad.Profile = skBaseContainer
+  pad.Length = 10
+  App.ActiveDocument.recompute()
+  pad.ReferenceAxis = (skBaseContainer,['N_Axis'])
+  skBaseContainer.Visibility = False
+  App.ActiveDocument.recompute()
+  pad.ViewObject.ShapeColor=getattr(body.getLinkedObject(True).ViewObject,'ShapeColor',pad.ViewObject.ShapeColor)
+  pad.ViewObject.LineColor=getattr(body.getLinkedObject(True).ViewObject,'LineColor',pad.ViewObject.LineColor)
+  pad.ViewObject.PointColor=getattr(body.getLinkedObject(True).ViewObject,'PointColor',pad.ViewObject.PointColor)
+  pad.ViewObject.Transparency=getattr(body.getLinkedObject(True).ViewObject,'Transparency',pad.ViewObject.Transparency)
+  pad.ViewObject.DisplayMode=getattr(body.getLinkedObject(True).ViewObject,'DisplayMode',pad.ViewObject.DisplayMode)
+  #Gui.getDocument('test').setEdit(doc.getObject('BaseContainer'), 0, 'Pad.')
+  Gui.Selection.clearSelection()
+  ### End command PartDesign_Pad
+  # Gui.Selection.clearSelection()
+  pad.Length = height
+  pad.TaperAngle = angle
+  pad.UseCustomVector = 0
+  pad.Direction = (0, 0, 1)
+  pad.ReferenceAxis = (skBaseContainer, ['N_Axis'])
+  pad.AlongSketchNormal = 1
+  pad.Type = 0
+  pad.UpToFace = None
+  pad.Reversed = reverse
+  pad.Midplane = 0
+  pad.Offset = 0
+  doc.recompute()
+  skBaseContainer.Visibility = False
+  return pad
+
+def makeWalls(doc, pad):
+  thickness = doc.getObject('BaseContainer').newObject('PartDesign::Thickness','Thickness')
+  thickness.Base = (pad,['Face10',])
+  pad.Visibility = False
+  #App.ActiveDocument.recompute()
+  thickness.ViewObject.ShapeColor=getattr(pad.getLinkedObject(True).ViewObject,'ShapeColor',thickness.ViewObject.ShapeColor)
+  thickness.ViewObject.LineColor=getattr(pad.getLinkedObject(True).ViewObject,'LineColor',thickness.ViewObject.LineColor)
+  thickness.ViewObject.PointColor=getattr(pad.getLinkedObject(True).ViewObject,'PointColor',thickness.ViewObject.PointColor)
+  thickness.ViewObject.Transparency=getattr(pad.getLinkedObject(True).ViewObject,'Transparency',thickness.ViewObject.Transparency)
+  thickness.ViewObject.DisplayMode=getattr(pad.getLinkedObject(True).ViewObject,'DisplayMode',thickness.ViewObject.DisplayMode)
+  thickness.Value = 1.2
+  thickness.Reversed = 1
+  thickness.Mode = 0
+  thickness.Intersection = 0
+  thickness.Join = 0
+  thickness.Base = (pad,["Face10",])
+  pad.Visibility = False
+  
+
+
+if __name__ == "__main__":
+  name, length, width, height = getValues() #('test',1,1,5) #
+  #Create a new document
+  doc = App.newDocument(name)
+  baseContainer, skBaseContainer = createBody(doc, 'BaseContainer', 'skBaseBody')
+  addRoundedRectangle(skBaseContainer, length*42-0.5, width*42-0.5, 3.75)
+  pad = padSketch(doc, baseContainer, skBaseContainer,'Container', height*7, 0)
+  # make walls
+  makeWalls(doc, pad)
+ 
+  #Make holders
+  x=42*length/2-0.25
+  y=-(42*width/2)+ 0.25
+  #baseHolder, skBaseHolder = createBody(doc, 'BaseHolder', 'skBaseHolder')
+  #Gen new sketch
+  skBaseHolder = createSketch(doc,baseContainer, 'skFirstHolder')
+  addRoundedRectangle(skBaseHolder, 41.5, 41.5, 3.75, False,x,y)
+  pad1 = padSketch(doc, baseContainer, skBaseHolder, 'FirstHolder', 2.15, -45,1)
+
+  skBaseHolder = createSketch(doc,baseContainer, 'skSecondHolder')
+  skBaseHolder.AttachmentOffset = App.Placement(App.Vector(0,0,-2.15),App.Rotation(App.Vector(0,0,1),0))
+  addRoundedRectangle(skBaseHolder, 37.2, 37.2, 1.6, False,x-2.1,y+2.1)
+  pad2 = padSketch(doc, baseContainer, skBaseHolder, 'SecondHolder', 2.6, 0,1)
+
+  skBaseHolder = createSketch(doc,baseContainer, 'skThirdHolder')
+  skBaseHolder.AttachmentOffset = App.Placement(App.Vector(0,0,-4.75),App.Rotation(App.Vector(0,0,1),0))
+  addRoundedRectangle(skBaseHolder, 37.2, 37.2, 1.6, False,x-2.1,y+2.1)
+  pad3 = padSketch(doc, baseContainer, skBaseHolder,  'ThirdHolder',0.8,-45,1)
+
+  #Multitransform
+  if length > 1 or width >1 :
+ 
+    multiTransform = baseContainer.newObject('PartDesign::MultiTransform','MultiTransform')
+    multiTransform.Originals = [pad1,pad2,pad3,]
+    multiTransform.Shape = pad3.Shape
+
+    linear_patterns = []
+
+    if length > 1: 
+      #first Linear pattern
+      linear_1 = baseContainer.newObject('PartDesign::LinearPattern','LinearPattern')
+      linear_1.Direction = (skBaseHolder,['H_Axis'])
+      linear_1.Length = (length-1) * 42 
+      linear_1.Occurrences = length
+      linear_patterns.append(linear_1)
+
+    if width > 1:
+      #first Linear pattern
+      linear_2 = baseContainer.newObject('PartDesign::LinearPattern','LinearPattern')
+      linear_2.Direction = (skBaseHolder,['V_Axis'])
+      linear_2.Length = (width-1) * 42 
+      linear_2.Occurrences = width
+      linear_2.Reversed = 1
+      linear_patterns.append(linear_2)
+
+    multiTransform.Transformations = linear_patterns
+    
+    multiTransform.Visibility = True
+
+
+
+
+
+
+  
+  #Make visible
+  doc.recompute()
+  ### Begin command Std_ViewFront
+  Gui.activeDocument().activeView().viewFront()
+  ### End command Std_ViewFront
+  ### Begin command Std_ViewIsometric
+  Gui.activeDocument().activeView().viewIsometric()
+  ### End command Std_ViewIsometric
+  ### Begin command Std_ViewFitAll
+  Gui.SendMsgToActiveView("ViewFit")
